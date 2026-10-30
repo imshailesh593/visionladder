@@ -21,7 +21,7 @@ struct LadderConfig {
     int32_t sampleBoxWidth = 30;
     int32_t sampleBoxHeight = 16;
     float luminanceThreshold = 45.0f; // Blank vs Populated threshold
-    int32_t detectionMode = 0;        // 0: Luminance, 1: Back/Lay Color Chroma, 2: Combined
+    int32_t detectionMode = 0;        // 0: Luminance, 1: Back/Lay Color Chroma, 2: Bet Angel Volume Text
     float minConfidence = 0.5f;       // Frame rejection threshold for >= 99.8% hit rate
 };
 
@@ -58,6 +58,28 @@ Java_com_laddervision_engine_vision_NativeVisionCore_detectSpreadBoundary(
 
 JNIEXPORT jlongArray JNICALL
 Java_com_laddervision_engine_vision_NativeVisionCore_detectSpreadBoundaryDetailed(
+        JNIEnv *env,
+        jobject thiz,
+        jobject byteBuffer,
+        jint rowStride,
+        jint pixelStride,
+        jint width,
+        jint height
+);
+
+JNIEXPORT jintArray JNICALL
+Java_com_laddervision_engine_vision_NativeVisionCore_detectBetAngelMedianAndStrikes(
+        JNIEnv *env,
+        jobject thiz,
+        jobject byteBuffer,
+        jint rowStride,
+        jint pixelStride,
+        jint width,
+        jint height
+);
+
+JNIEXPORT jintArray JNICALL
+Java_com_laddervision_engine_vision_NativeVisionCore_autoDetectBetAngelLadder(
         JNIEnv *env,
         jobject thiz,
         jobject byteBuffer,

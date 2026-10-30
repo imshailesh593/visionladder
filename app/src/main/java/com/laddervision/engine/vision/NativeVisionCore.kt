@@ -21,6 +21,15 @@ class NativeVisionCore {
         val processingTimeUs: Long
     )
 
+    data class BetAngelStrikePlan(
+        val bestBackRow: Int,
+        val bestLayRow: Int,
+        val backStrikeRow: Int, // Above 857 (in unpopulated blue Back cell)
+        val layStrikeRow: Int,  // Below 755 (in unpopulated pink Lay cell)
+        val confidencePercent: Int,
+        val timeUs: Int
+    )
+
     external fun updateCalibration(
         ladderLeft: Int,
         ladderTop: Int,
@@ -52,6 +61,22 @@ class NativeVisionCore {
         width: Int,
         height: Int
     ): LongArray?
+
+    external fun detectBetAngelMedianAndStrikes(
+        byteBuffer: ByteBuffer,
+        rowStride: Int,
+        pixelStride: Int,
+        width: Int,
+        height: Int
+    ): IntArray?
+
+    external fun autoDetectBetAngelLadder(
+        byteBuffer: ByteBuffer,
+        rowStride: Int,
+        pixelStride: Int,
+        width: Int,
+        height: Int
+    ): IntArray?
 
     external fun getLuminanceProfile(
         byteBuffer: ByteBuffer,
@@ -105,5 +130,25 @@ class NativeVisionCore {
         } else {
             DetectionResult(spreadRow = -1, confidence = 0.0f, processingTimeUs = 0L)
         }
+    }
+
+    fun getBetAngelPlan(
+        byteBuffer: ByteBuffer,
+        rowStride: Int,
+        pixelStride: Int,
+        width: Int,
+        height: Int
+    ): BetAngelStrikePlan? {
+        val raw = detectBetAngelMedianAndStrikes(byteBuffer, rowStride, pixelStride, width, height)
+        return if (raw != null && raw.size >= 6) {
+            BetAngelStrikePlan(
+                bestBackRow = raw[0],
+                bestLayRow = raw[1],
+                backStrikeRow = raw[2],
+                layStrikeRow = raw[3],
+                confidencePercent = raw[4],
+                timeUs = raw[5]
+            )
+        } else null
     }
 }

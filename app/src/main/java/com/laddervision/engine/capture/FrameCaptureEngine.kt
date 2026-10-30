@@ -48,7 +48,10 @@ class FrameCaptureEngine(
     private var validFramesCount: Long = 0L
     private var lastGestureTimeMs: Long = 0L
     private var rollingCadenceMs: Float = 20.0f
-    private var previousSpreadRow: Int = -1
+
+    // Tracking previous spread boundary
+    private var prevBestBackRow: Int = -1
+    private var prevBestLayRow: Int = -1
     private var oneShotRequested = AtomicBoolean(false)
 
     fun updateConfig(newConfig: LadderConfig) {
@@ -95,7 +98,8 @@ class FrameCaptureEngine(
         framesCount = 0L
         rejectedFramesCount = 0L
         validFramesCount = 0L
-        previousSpreadRow = -1
+        prevBestBackRow = -1
+        prevBestLayRow = -1
 
         syncHandler?.post(processCycle)
     }
@@ -153,25 +157,44 @@ class FrameCaptureEngine(
                     val imgW = image.width
                     val imgH = image.height
 
-                    // Zero-copy C++ NDK matrix segmentation
-                    val det = visionCore.detectDetailed(buffer, rowStride, pixelStride, imgW, imgH)
-                    detectedRow = det.spreadRow
-                    confidence = det.confidence
-                    nativeUs = det.processingTimeUs
+                    val plan = visionCore.getBetAngelPlan(buffer, rowStride, pixelStride, imgW, imgH)
+                    if (plan != null && (plan.bestBackRow != -1 || plan.bestLayRow != -1)) {
+                        detectedRow = (plan.bestBackRow + plan.bestLayRow) / 2
+                        confidence = plan.confidencePercent / 100.0f
+                        nativeUs = plan.timeUs.toLong()
 
-                    framesCount++
-                    if (detectedRow != -1) {
                         validFramesCount++
+
+                        val isSpreadShift = (plan.bestBackRow != prevBestBackRow || plan.bestLayRow != prevBestLayRow)
+                        val forceOneShot = oneShotRequested.compareAndSet(true, false)
+
+                        // Check trigger criteria: Spread Shift or Manual One-Shot
+                        if (config.autoTradeEnabled && !LadderTouchService.isDisarmed && (isSpreadShift || forceOneShot)) {
+                            val now = SystemClock.uptimeMillis()
+                            if (now - lastGestureTimeMs >= config.cooldownMs) {
+                                lastGestureTimeMs = now
+
+                                // Strike above 857 (at backStrikeRow in Back col)
+                                // Strike below 755 (at layStrikeRow in Lay col)
+                                val yBack = config.ladderTop + (plan.backStrikeRow * config.rowHeight) + (config.rowHeight / 2)
+                                val yLay = config.ladderTop + (plan.layStrikeRow * config.rowHeight) + (config.rowHeight / 2)
+
+                                LadderTouchService.instance?.dispatchDualSimultaneousTap(
+                                    config.backColX.toFloat(),
+                                    yBack.toFloat(),
+                                    config.layColX.toFloat(),
+                                    yLay.toFloat()
+                                )
+                            }
+                        }
+
+                        prevBestBackRow = plan.bestBackRow
+                        prevBestLayRow = plan.bestLayRow
                     } else {
                         rejectedFramesCount++
                     }
 
-                    // Modular Trading Flow & Strategy Dispatcher
-                    if (shouldFireGesture(detectedRow)) {
-                        fireDualSimultaneousTap(detectedRow)
-                    }
-
-                    previousSpreadRow = detectedRow
+                    framesCount++
                 } catch (e: Exception) {
                     Log.e(TAG, "Frame processing error", e)
                 } finally {
@@ -200,57 +223,8 @@ class FrameCaptureEngine(
                 isSafetyArmed = !LadderTouchService.isDisarmed
             )
 
-            // Strict deterministic 20ms sync clock
             val nextDelay = (TARGET_INTERVAL_MS - elapsed).coerceAtLeast(2L)
             syncHandler?.postDelayed(this, nextDelay)
         }
-    }
-
-    private fun shouldFireGesture(detectedRow: Int): Boolean {
-        if (detectedRow == -1) return false
-        if (!config.autoTradeEnabled) return false
-        if (LadderTouchService.isDisarmed) return false
-
-        // Manual one-shot trigger override
-        if (oneShotRequested.compareAndSet(true, false)) {
-            return true
-        }
-
-        val now = SystemClock.uptimeMillis()
-        if (now - lastGestureTimeMs < config.cooldownMs) {
-            return false
-        }
-
-        return when (config.triggerStrategy) {
-            LadderConfig.STRATEGY_SPREAD_SHIFT -> {
-                // Fires when spread shifts to a new rung
-                detectedRow != previousSpreadRow
-            }
-            LadderConfig.STRATEGY_GAP_EXPANSION -> {
-                // In expansion mode, fires when spread gap condition met
-                true
-            }
-            LadderConfig.STRATEGY_CONTINUOUS_PEG -> {
-                // Refreshes quotes periodically
-                true
-            }
-            LadderConfig.STRATEGY_MANUAL_ONE_SHOT -> false
-            LadderConfig.STRATEGY_MONITOR_ONLY -> false
-            else -> false
-        }
-    }
-
-    private fun fireDualSimultaneousTap(spreadRow: Int) {
-        lastGestureTimeMs = SystemClock.uptimeMillis()
-
-        val lowerBlankY = config.ladderTop + ((spreadRow + config.lowerBlankOffsetRows) * config.rowHeight) + (config.rowHeight / 2)
-        val targetUpperY = config.ladderTop + ((spreadRow - config.targetUpperOffsetRows) * config.rowHeight) + (config.rowHeight / 2)
-
-        LadderTouchService.instance?.dispatchDualSimultaneousTap(
-            config.backColX.toFloat(),
-            lowerBlankY.toFloat(),
-            config.layColX.toFloat(),
-            targetUpperY.toFloat()
-        )
     }
 }

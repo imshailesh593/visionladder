@@ -419,7 +419,35 @@ fun DashboardTab(
             shape = RoundedCornerShape(12.dp)
         ) {
             Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text("Quick Calibration Sliders", fontWeight = FontWeight.SemiBold, color = Color.White)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("Calibration & Screen Presets", fontWeight = FontWeight.SemiBold, color = Color.White)
+                    Button(
+                        onClick = {
+                            val betAngelConfig = config.copy(
+                                ladderLeft = 80,
+                                ladderTop = 330,
+                                ladderWidth = 320,
+                                ladderHeight = 560,
+                                rowHeight = 31,
+                                rowCount = 18,
+                                backColX = 162,
+                                layColX = 320,
+                                presetName = "Bet Angel v1.63",
+                                triggerStrategy = LadderConfig.STRATEGY_SPREAD_SHIFT
+                            )
+                            onConfigChanged(betAngelConfig)
+                            Toast.makeText(context, "Loaded Bet Angel v1.63 Preset", Toast.LENGTH_SHORT).show()
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0284C7)),
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)
+                    ) {
+                        Text("BET ANGEL PRESET", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                    }
+                }
 
                 Text("Ladder Top: ${config.ladderTop} px", color = Color.LightGray, fontSize = 12.sp)
                 Slider(
@@ -475,17 +503,20 @@ fun StatusRow(label: String, status: String, isGood: Boolean) {
 @Composable
 fun SimulatorTab(config: LadderConfig) {
     val coroutineScope = rememberCoroutineScope()
-    var currentSpreadRow by remember { mutableIntStateOf(10) }
-    var isSimulating by remember { mutableStateOf(true) }
-    var lastTapMarker by remember { mutableStateOf<Pair<Float, Float>?>(null) }
+    var currentSpreadRow by remember { mutableIntStateOf(7) } // 7 = 1.34 (Best Lay)
+    var isSimulating by remember { mutableStateOf(false) }
+
+    val prices = listOf("1.41", "1.40", "1.39", "1.38", "1.37", "1.36", "1.35", "1.34", "1.33", "1.32", "1.31", "1.30", "1.29", "1.28", "1.27", "1.26", "1.25", "1.24")
+    val defaultBackVol = listOf("", "", "", "", "", "", "", "", "857", "12834", "554", "4176", "3812", "1653", "", "11", "", "")
+    val defaultLayVol = listOf("", "7", "14", "3861", "2714", "1731", "1031", "755", "", "", "", "", "", "", "", "", "", "")
 
     // Dynamic market volatility simulation
     LaunchedEffect(isSimulating) {
         while (isSimulating) {
-            delay(1200L)
+            delay(1500L)
             // Shift spread up or down by 1 tick randomly
             val delta = if (Math.random() > 0.5) 1 else -1
-            currentSpreadRow = (currentSpreadRow + delta).coerceIn(4, config.rowCount - 5)
+            currentSpreadRow = (currentSpreadRow + delta).coerceIn(4, prices.size - 5)
         }
     }
 
@@ -500,7 +531,10 @@ fun SimulatorTab(config: LadderConfig) {
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Text("Mock Order Book Ladder", fontWeight = FontWeight.Bold, color = Color.White, fontSize = 16.sp)
+            Column {
+                Text("Bet Angel Ladder Simulator", fontWeight = FontWeight.Bold, color = Color.White, fontSize = 16.sp)
+                Text("Median between Back (1.33) & Lay (1.34)", color = Color.LightGray, fontSize = 11.sp)
+            }
             Button(
                 onClick = { isSimulating = !isSimulating },
                 colors = ButtonDefaults.buttonColors(
@@ -511,9 +545,32 @@ fun SimulatorTab(config: LadderConfig) {
             }
         }
 
-        Spacer(modifier = Modifier.height(12.dp))
+        Spacer(modifier = Modifier.height(10.dp))
 
-        // Render Ladder
+        // Planned Strikes Information Banner
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(containerColor = Color(0xFF1E293B))
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(10.dp),
+                horizontalArrangement = Arrangement.SpaceAround
+            ) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text("BACK STRIKE (Left)", color = Color(0xFF60A5FA), fontSize = 11.sp)
+                    Text("Price ${prices.getOrElse(currentSpreadRow) { "1.34" }} (>857)", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                }
+                Box(modifier = Modifier.width(1.dp).height(30.dp).background(Color.Gray))
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text("LAY STRIKE (Right)", color = Color(0xFFF472B6), fontSize = 11.sp)
+                    Text("Price ${prices.getOrElse(currentSpreadRow + 1) { "1.33" }} (<755)", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(10.dp))
+
+        // Render Bet Angel Ladder
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -526,84 +583,83 @@ fun SimulatorTab(config: LadderConfig) {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .background(Color(0xFF1E293B))
-                    .padding(vertical = 8.dp),
+                    .background(Color(0xFFE2E8F0))
+                    .padding(vertical = 6.dp),
                 horizontalArrangement = Arrangement.SpaceAround
             ) {
-                Text("BACK (BID)", color = Color(0xFF60A5FA), fontWeight = FontWeight.Bold, fontSize = 12.sp)
-                Text("PRICE", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 12.sp)
-                Text("LAY (ASK)", color = Color(0xFFF472B6), fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                Text("80% BACK", color = Color(0xFF0369A1), fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                Text("ODDS", color = Color.Black, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                Text("20% LAY", color = Color(0xFFBE185D), fontWeight = FontWeight.Bold, fontSize = 12.sp)
             }
 
-            for (r in 0 until config.rowCount) {
-                val isSpread = r == currentSpreadRow
-                val isBackPopulated = r >= currentSpreadRow
-                val isLayPopulated = r < currentSpreadRow
+            for (r in prices.indices) {
+                val isLayBest = r == currentSpreadRow // e.g. 1.34
+                val isBackBest = r == currentSpreadRow + 1 // e.g. 1.33
+                val isBackPopulated = r > currentSpreadRow
+                val isLayPopulated = r <= currentSpreadRow
 
-                val basePrice = 2.50 - (r * 0.02)
+                val price = prices[r]
+                val backVol = if (isBackPopulated) defaultBackVol.getOrElse(r) { "500" } else ""
+                val layVol = if (isLayPopulated) defaultLayVol.getOrElse(r) { "400" } else ""
 
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(36.dp)
-                        .background(
-                            when {
-                                isSpread -> Color(0xFF451A03)
-                                else -> Color.Transparent
-                            }
-                        )
-                        .border(0.5.dp, Color(0xFF1E293B)),
+                        .height(30.dp)
+                        .border(0.5.dp, Color(0xFFCBD5E1)),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    // Back Column (left)
+                    // Back Column (light blue #D1E4EC)
                     Box(
                         modifier = Modifier
                             .weight(1f)
                             .fillMaxHeight()
                             .background(
-                                if (isBackPopulated) Color(0xFF1E3A8A) else Color(0xFF0F172A)
+                                if (isLayBest) Color(0xFFBAE6FD) // Highlighted Back strike cell
+                                else Color(0xFFD1E4EC)
                             )
-                            .padding(horizontal = 8.dp),
+                            .padding(horizontal = 6.dp),
                         contentAlignment = Alignment.Center
                     ) {
-                        if (isBackPopulated) {
-                            Text("£${(config.rowCount - r) * 125}", color = Color(0xFF93C5FD), fontSize = 11.sp)
-                        } else {
-                            Text("-", color = Color(0xFF475569), fontSize = 11.sp)
+                        if (isLayBest) {
+                            Text("TAP 1 (>857)", color = Color(0xFF0369A1), fontWeight = FontWeight.Bold, fontSize = 10.sp)
+                        } else if (backVol.isNotEmpty()) {
+                            Text(backVol, color = Color.Black, fontWeight = FontWeight.SemiBold, fontSize = 11.sp)
                         }
                     }
 
-                    // Price Column (center)
+                    // Price Column (royal blue #0000CC)
                     Box(
                         modifier = Modifier
-                            .weight(0.8f)
+                            .weight(0.75f)
                             .fillMaxHeight()
-                            .background(Color(0xFF1E293B)),
+                            .background(Color(0xFF0000CC)),
                         contentAlignment = Alignment.Center
                     ) {
                         Text(
-                            String.format("%.2f", basePrice),
-                            color = if (isSpread) Color(0xFFFBBF24) else Color.White,
-                            fontWeight = if (isSpread) FontWeight.Bold else FontWeight.Normal,
+                            price,
+                            color = Color.White,
+                            fontWeight = FontWeight.Bold,
                             fontSize = 12.sp
                         )
                     }
 
-                    // Lay Column (right)
+                    // Lay Column (pink #FCD4E5)
                     Box(
                         modifier = Modifier
                             .weight(1f)
                             .fillMaxHeight()
                             .background(
-                                if (isLayPopulated) Color(0xFF831843) else Color(0xFF0F172A)
+                                if (isBackBest) Color(0xFFFBCFE8) // Highlighted Lay strike cell
+                                else Color(0xFFFCD4E5)
                             )
-                            .padding(horizontal = 8.dp),
+                            .padding(horizontal = 6.dp),
                         contentAlignment = Alignment.Center
                     ) {
-                        if (isLayPopulated) {
-                            Text("£${(r + 1) * 110}", color = Color(0xFFFBCFE8), fontSize = 11.sp)
-                        } else {
-                            Text("-", color = Color(0xFF475569), fontSize = 11.sp)
+                        if (isBackBest) {
+                            Text("TAP 2 (<755)", color = Color(0xFFBE185D), fontWeight = FontWeight.Bold, fontSize = 10.sp)
+                        } else if (layVol.isNotEmpty()) {
+                            Text(layVol, color = Color.Black, fontWeight = FontWeight.SemiBold, fontSize = 11.sp)
                         }
                     }
                 }

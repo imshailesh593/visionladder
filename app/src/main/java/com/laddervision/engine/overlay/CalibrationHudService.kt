@@ -444,18 +444,18 @@ class CalibrationHudService : Service() {
 
                 if (r == spreadRow) {
                     canvas.drawRect(left, rowY, right, rowY + config.rowHeight, spreadHighlightPaint)
-                    canvas.drawText("SPREAD #$r (${(currentTelemetry.confidence * 100).toInt()}%)", left + 10, rowY + (config.rowHeight * 0.7f), textPaint)
+                    canvas.drawText("MEDIAN / SPREAD #$r", left + 10, rowY + (config.rowHeight * 0.7f), textPaint)
 
-                    val lowerBlankY = top + ((r + config.lowerBlankOffsetRows) * config.rowHeight) + (config.rowHeight / 2)
-                    val targetUpperY = top + ((r - config.targetUpperOffsetRows) * config.rowHeight) + (config.rowHeight / 2)
+                    // Target rungs on either side of median:
+                    // Stroke 1: Back column above 857 (at r - 1 or r)
+                    val backStrikeY = top + ((r - 1).coerceAtLeast(0) * config.rowHeight) + (config.rowHeight / 2)
+                    canvas.drawCircle(config.backColX.toFloat(), backStrikeY, 15f, tapTargetPaint)
+                    canvas.drawText("STRIKE BACK (>857)", config.backColX.toFloat() + 20, backStrikeY + 8, textPaint)
 
-                    // Stroke 1: Lower Blank Cell
-                    canvas.drawCircle(config.backColX.toFloat(), lowerBlankY, 14f, tapTargetPaint)
-                    canvas.drawText("STROKE 1", config.backColX.toFloat() + 20, lowerBlankY + 10, textPaint)
-
-                    // Stroke 2: Target Upper Cell
-                    canvas.drawCircle(config.layColX.toFloat(), targetUpperY, 14f, tapTargetPaint)
-                    canvas.drawText("STROKE 2", config.layColX.toFloat() + 20, targetUpperY + 10, textPaint)
+                    // Stroke 2: Lay column below 755 (at r + 1 or r)
+                    val layStrikeY = top + ((r + 1).coerceAtMost(config.rowCount - 1) * config.rowHeight) + (config.rowHeight / 2)
+                    canvas.drawCircle(config.layColX.toFloat(), layStrikeY, 15f, tapTargetPaint)
+                    canvas.drawText("STRIKE LAY (<755)", config.layColX.toFloat() + 20, layStrikeY + 8, textPaint)
                 }
             }
         }
