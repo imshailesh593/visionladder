@@ -53,6 +53,20 @@ class CalibrationHudService : Service() {
         config = LadderConfig.load(this)
         windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
 
+        val channelId = "ladder_hud_channel"
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val channel = android.app.NotificationChannel(channelId, "Ladder HUD", android.app.NotificationManager.IMPORTANCE_LOW)
+            val nm = getSystemService(android.app.NotificationManager::class.java)
+            nm.createNotificationChannel(channel)
+        }
+        val notification = androidx.core.app.NotificationCompat.Builder(this, channelId)
+            .setContentTitle("Vision HUD Active")
+            .setContentText("Companion Scalping & Calibration HUD running")
+            .setSmallIcon(android.R.drawable.presence_online)
+            .setPriority(androidx.core.app.NotificationCompat.PRIORITY_LOW)
+            .build()
+        startForeground(1002, notification)
+
         initCanvasOverlay()
         initControlToolbar()
 
@@ -107,7 +121,7 @@ class CalibrationHudService : Service() {
         }
 
         val title = TextView(this).apply {
-            text = "LADDER VISION HUD"
+            text = "VISION HUD"
             setTextColor(Color.WHITE)
             textSize = 12f
             paint.isFakeBoldText = true
@@ -204,10 +218,45 @@ class CalibrationHudService : Service() {
         buttonRow2.addView(btnFireOneShot)
         buttonRow2.addView(btnKillSwitch)
 
+        val buttonRow3 = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(0, 8, 0, 0)
+        }
+
+        val btnScalpA = Button(this).apply {
+            text = "⚡ SCALP A"
+            textSize = 10f
+            setBackgroundColor(Color.parseColor("#0284C7"))
+            setTextColor(Color.WHITE)
+            paint.isFakeBoldText = true
+            setOnClickListener {
+                LadderTouchService.instance?.rearm()
+                val targetY = config.ladderTop + (currentTelemetry.spreadRow * config.rowHeight) + (config.rowHeight / 2)
+                LadderTouchService.instance?.dispatchSingleTap(config.backColX.toFloat(), targetY.toFloat(), durationMs = 30L)
+            }
+        }
+
+        val btnScalpB = Button(this).apply {
+            text = "⚡ SCALP B"
+            textSize = 10f
+            setBackgroundColor(Color.parseColor("#DB2777"))
+            setTextColor(Color.WHITE)
+            paint.isFakeBoldText = true
+            setOnClickListener {
+                LadderTouchService.instance?.rearm()
+                val targetY = config.ladderTop + (currentTelemetry.spreadRow * config.rowHeight) + (config.rowHeight / 2)
+                LadderTouchService.instance?.dispatchSingleTap(config.layColX.toFloat(), targetY.toFloat(), durationMs = 30L)
+            }
+        }
+
+        buttonRow3.addView(btnScalpA)
+        buttonRow3.addView(btnScalpB)
+
         container.addView(headerRow)
         container.addView(telemetryText)
         container.addView(buttonRow1)
         container.addView(buttonRow2)
+        container.addView(buttonRow3)
 
         controlToolbarView = container
 

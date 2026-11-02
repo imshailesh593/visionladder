@@ -16,6 +16,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -40,17 +41,25 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import android.appwidget.AppWidgetManager
+import android.content.ComponentName
 import com.laddervision.engine.model.DetectionTelemetry
 import com.laddervision.engine.model.LadderConfig
 import com.laddervision.engine.overlay.CalibrationHudService
 import com.laddervision.engine.service.LadderAutomationService
 import com.laddervision.engine.touch.LadderTouchService
 import com.laddervision.engine.vision.NativeVisionCore
+import com.laddervision.engine.widget.VisionWidgetProvider
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
 import java.nio.ByteBuffer
 
 class MainActivity : ComponentActivity() {
+
+    companion object {
+        val autoStartTrigger = MutableStateFlow(false)
+    }
 
     private lateinit var config: LadderConfig
     private val visionCore = NativeVisionCore()
@@ -58,6 +67,9 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         config = LadderConfig.load(this)
+        if (intent?.getBooleanExtra("EXTRA_AUTO_START", false) == true) {
+            autoStartTrigger.value = true
+        }
 
         setContent {
             MaterialTheme(
@@ -79,6 +91,14 @@ class MainActivity : ComponentActivity() {
             }
         }
     }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        if (intent.getBooleanExtra("EXTRA_AUTO_START", false)) {
+            autoStartTrigger.value = true
+        }
+    }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -90,7 +110,9 @@ fun LadderVisionApp(
 ) {
     val context = activity
     val isAccessibilityActive by LadderTouchService.isServiceConnected.collectAsState()
+    val isHookArmed by LadderTouchService.isHookArmedState.collectAsState()
     val telemetry by LadderAutomationService.engineTelemetry.collectAsState()
+    val autoStart by MainActivity.autoStartTrigger.collectAsState()
     var currentConfig by remember { mutableStateOf(initialConfig) }
     var selectedTab by remember { mutableIntStateOf(0) }
 
@@ -108,9 +130,17 @@ fun LadderVisionApp(
             } else {
                 context.startService(serviceIntent)
             }
-            Toast.makeText(context, "Ladder Vision 50Hz Engine Started", Toast.LENGTH_SHORT).show()
+            Toast.makeText(context, "Vision Engine Started", Toast.LENGTH_SHORT).show()
         } else {
             Toast.makeText(context, "MediaProjection permission required for 20ms frame capture", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    LaunchedEffect(autoStart) {
+        if (autoStart) {
+            MainActivity.autoStartTrigger.value = false
+            val mgr = context.getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+            mediaProjectionLauncher.launch(mgr.createScreenCaptureIntent())
         }
     }
 
@@ -129,7 +159,7 @@ fun LadderVisionApp(
                         )
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
-                            "Ladder Vision Engine",
+                            "Vision",
                             fontWeight = FontWeight.Bold,
                             color = Color.White,
                             fontSize = 18.sp
@@ -180,6 +210,12 @@ fun LadderVisionApp(
                     icon = { Icon(Icons.Default.Tune, contentDescription = "Flow") },
                     label = { Text("Flow") }
                 )
+                NavigationBarItem(
+                    selected = selectedTab == 4,
+                    onClick = { selectedTab = 4 },
+                    icon = { Icon(Icons.Default.Info, contentDescription = "Guide") },
+                    label = { Text("Guide") }
+                )
             }
         }
     ) { padding ->
@@ -194,10 +230,12 @@ fun LadderVisionApp(
                     config = currentConfig,
                     telemetry = telemetry,
                     isAccessibilityActive = isAccessibilityActive,
+                    isHookArmed = isHookArmed,
                     onStartCapture = {
                         val mgr = context.getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
                         mediaProjectionLauncher.launch(mgr.createScreenCaptureIntent())
                     },
+                    onOpenGuide = { selectedTab = 4 },
                     onConfigChanged = { updated ->
                         currentConfig = updated
                         updated.save(context)
@@ -214,6 +252,11 @@ fun LadderVisionApp(
                         LadderAutomationService.instance?.updateConfig(updated)
                     }
                 )
+                4 -> GuideTab(
+                    activity = activity,
+                    isAccessibilityActive = isAccessibilityActive,
+                    onNavigateToDashboard = { selectedTab = 0 }
+                )
             }
         }
     }
@@ -225,7 +268,9 @@ fun DashboardTab(
     config: LadderConfig,
     telemetry: DetectionTelemetry,
     isAccessibilityActive: Boolean,
+    isHookArmed: Boolean,
     onStartCapture: () -> Unit,
+    onOpenGuide: () -> Unit,
     onConfigChanged: (LadderConfig) -> Unit
 ) {
     val context = activity
@@ -238,6 +283,187 @@ fun DashboardTab(
             .verticalScroll(scrollState),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
+        // Master ON/OFF Power Switch Card (Turns App On & Off on the Home Screen)
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(
+                containerColor = if (telemetry.isRunning || isHookArmed) Color(0xFF0F2E22) else Color(0xFF1E293B)
+            ),
+            border = BorderStroke(
+                1.5.dp,
+                if (telemetry.isRunning || isHookArmed) Color(0xFF10B981) else Color(0xFF334155)
+            ),
+            shape = RoundedCornerShape(16.dp)
+        ) {
+            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
+                        Box(
+                            modifier = Modifier
+                                .size(42.dp)
+                                .background(
+                                    if (telemetry.isRunning || isHookArmed) Color(0xFF10B981).copy(alpha = 0.2f) else Color(0xFF334155),
+                                    CircleShape
+                                ),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                Icons.Default.PowerSettingsNew,
+                                contentDescription = "Master Power",
+                                tint = if (telemetry.isRunning || isHookArmed) Color(0xFF10B981) else Color.LightGray,
+                                modifier = Modifier.size(24.dp)
+                            )
+                        }
+                        Spacer(modifier = Modifier.width(12.dp))
+                        Column {
+                            Text(
+                                "VISION MASTER SWITCH",
+                                fontWeight = FontWeight.Bold,
+                                color = Color.White,
+                                fontSize = 15.sp
+                            )
+                            Text(
+                                if (telemetry.isRunning) "● ACTIVE — 50Hz Vision & Scalper ON"
+                                else if (isHookArmed) "● READY — Touch Interceptor Hook Armed"
+                                else "○ STANDBY — App is OFF (0% CPU)",
+                                color = if (telemetry.isRunning || isHookArmed) Color(0xFF34D399) else Color(0xFF94A3B8),
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        }
+                    }
+
+                    // Main Master ON/OFF Toggle Switch
+                    Switch(
+                        checked = telemetry.isRunning || isHookArmed,
+                        onCheckedChange = { isChecked ->
+                            if (isChecked) {
+                                onStartCapture()
+                                LadderTouchService.instance?.armTouchHook()
+                                VisionWidgetProvider.updateAllWidgets(context)
+                            } else {
+                                context.startService(Intent(context, LadderAutomationService::class.java).apply {
+                                    action = LadderAutomationService.ACTION_STOP
+                                })
+                                LadderTouchService.instance?.disarmTouchHook()
+                                context.stopService(Intent(context, CalibrationHudService::class.java))
+                                VisionWidgetProvider.updateAllWidgets(context)
+                            }
+                        },
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = Color.White,
+                            checkedTrackColor = Color(0xFF10B981),
+                            uncheckedThumbColor = Color.LightGray,
+                            uncheckedTrackColor = Color(0xFF334155)
+                        )
+                    )
+                }
+
+                HorizontalDivider(color = Color(0xFF334155), thickness = 0.5.dp)
+
+                // Sub-switch: Screen Touch Interceptor Hook
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("Touch Interceptor Hook:", color = Color.LightGray, fontSize = 12.sp)
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            if (isHookArmed) "ARMED" else "DISARMED",
+                            color = if (isHookArmed) Color(0xFF38BDF8) else Color(0xFF94A3B8),
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 11.sp
+                        )
+                    }
+
+                    Switch(
+                        checked = isHookArmed,
+                        onCheckedChange = { isChecked ->
+                            if (isChecked) {
+                                LadderTouchService.instance?.armTouchHook()
+                            } else {
+                                LadderTouchService.instance?.disarmTouchHook()
+                            }
+                            VisionWidgetProvider.updateAllWidgets(context)
+                        },
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = Color.White,
+                            checkedTrackColor = Color(0xFF38BDF8),
+                            uncheckedThumbColor = Color.LightGray,
+                            uncheckedTrackColor = Color(0xFF334155)
+                        )
+                    )
+                }
+
+                // One-click Pin ON/OFF Switch to Phone Home Screen Launcher
+                OutlinedButton(
+                    onClick = {
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                            val appWidgetManager = context.getSystemService(AppWidgetManager::class.java)
+                            if (appWidgetManager != null && appWidgetManager.isRequestPinAppWidgetSupported) {
+                                val myProvider = ComponentName(context, VisionWidgetProvider::class.java)
+                                appWidgetManager.requestPinAppWidget(myProvider, null, null)
+                                Toast.makeText(context, "Placing Vision ON/OFF Switch on your Home Screen...", Toast.LENGTH_SHORT).show()
+                            } else {
+                                Toast.makeText(context, "Add 'Vision' widget manually from your phone's Home Screen widgets menu.", Toast.LENGTH_LONG).show()
+                            }
+                        } else {
+                            Toast.makeText(context, "Add 'Vision' widget from your phone's Home Screen widgets menu.", Toast.LENGTH_LONG).show()
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    border = BorderStroke(1.dp, Color(0xFF38BDF8).copy(alpha = 0.6f)),
+                    shape = RoundedCornerShape(8.dp)
+                ) {
+                    Icon(
+                        Icons.Default.Widgets,
+                        contentDescription = "Home Screen Widget",
+                        tint = Color(0xFF38BDF8),
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        "PIN ON/OFF SWITCH TO PHONE HOME SCREEN",
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFF38BDF8)
+                    )
+                }
+            }
+        }
+
+        // Quick Setup Guide Banner
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable { onOpenGuide() },
+            colors = CardDefaults.cardColors(containerColor = Color(0xFF1E293B)),
+            border = BorderStroke(1.dp, Color(0xFF3B82F6)),
+            shape = RoundedCornerShape(12.dp)
+        ) {
+            Row(
+                modifier = Modifier.padding(14.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
+                    Icon(Icons.Default.Info, contentDescription = null, tint = Color(0xFF60A5FA))
+                    Spacer(modifier = Modifier.width(10.dp))
+                    Column {
+                        Text("App Setup & Trading Guide", fontWeight = FontWeight.Bold, color = Color.White, fontSize = 14.sp)
+                        Text("Prerequisites, Step-by-Step & Safety details", color = Color.LightGray, fontSize = 11.sp)
+                    }
+                }
+                Text("VIEW >", color = Color(0xFF60A5FA), fontWeight = FontWeight.Bold, fontSize = 12.sp)
+            }
+        }
+
         // System Status Card
         Card(
             modifier = Modifier.fillMaxWidth(),
@@ -412,6 +638,133 @@ fun DashboardTab(
             }
         }
 
+        // Automatic Touch Companion Control Card
+        val isHookArmed by LadderTouchService.isHookArmedState.collectAsState()
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(containerColor = if (isHookArmed) Color(0xFF1E293B) else Color(0xFF131D31)),
+            shape = RoundedCornerShape(12.dp)
+        ) {
+            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("Companion Touch Interceptor", fontWeight = FontWeight.SemiBold, color = Color.White)
+                        Text(
+                            if (isHookArmed) "ARMED (Remote Desktop Only)" else "DISARMED (100% Native Phone Touch)",
+                            color = if (isHookArmed) Color(0xFF34D399) else Color(0xFF94A3B8),
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                    Button(
+                        onClick = {
+                            if (!isHookArmed) {
+                                LadderTouchService.instance?.armTouchHook()
+                                Toast.makeText(context, "Touch companion ARMED for Remote Desktop", Toast.LENGTH_SHORT).show()
+                            } else {
+                                LadderTouchService.instance?.disarmTouchHook()
+                                Toast.makeText(context, "Touch companion DISARMED (100% Native Touch)", Toast.LENGTH_SHORT).show()
+                            }
+                        },
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = if (!isHookArmed) Color(0xFF0284C7) else Color(0xFFEF4444)
+                        )
+                    ) {
+                        Text(if (!isHookArmed) "ARM HOOK" else "DISARM")
+                    }
+                }
+                Text(
+                    "When disarmed (default), your phone's touch screen and touchpad are 100% untouched. When armed, companion strikes are strictly scoped to Microsoft Remote Desktop and automatically detach anywhere else.",
+                    color = Color.Gray,
+                    fontSize = 11.sp
+                )
+
+                Divider(color = Color(0xFF334155), thickness = 1.dp)
+
+                // Exact Vacant Boundary Targeting Indicators
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text(
+                        "Live Vacant Boundary Targeting",
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFF38BDF8),
+                        fontSize = 13.sp
+                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = Color(0xFF0F172A),
+                            border = BorderStroke(1.dp, Color(0xFF00E5FF)),
+                            modifier = Modifier.weight(1f).padding(end = 4.dp)
+                        ) {
+                            Column(modifier = Modifier.padding(8.dp)) {
+                                Text("Col A (Back)", color = Color(0xFF00E5FF), fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                Text("Ends from Top: Row ${LadderTouchService.activeBackStrikeRow}", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                                Text("Y = ${LadderTouchService.activeBackStrikeY.toInt()} px", color = Color.Gray, fontSize = 10.sp)
+                            }
+                        }
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = Color(0xFF0F172A),
+                            border = BorderStroke(1.dp, Color(0xFFFF4081)),
+                            modifier = Modifier.weight(1f).padding(start = 4.dp)
+                        ) {
+                            Column(modifier = Modifier.padding(8.dp)) {
+                                Text("Col B (Lay)", color = Color(0xFFFF4081), fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                Text("Ends from Bottom: Row ${LadderTouchService.activeLayStrikeRow}", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                                Text("Y = ${LadderTouchService.activeLayStrikeY.toInt()} px", color = Color.Gray, fontSize = 10.sp)
+                            }
+                        }
+                    }
+                    Text(
+                        "Rule: Strictly selects outer vacant boundary. Interior vacant pockets with numbers beyond are 100% ignored.",
+                        color = Color(0xFF94A3B8),
+                        fontSize = 10.sp
+                    )
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        OutlinedButton(
+                            onClick = {
+                                val intent = Intent(LadderTouchService.ACTION_SCALP_COLUMN_A).apply {
+                                    setPackage(context.packageName)
+                                    putExtra("userX", LadderTouchService.activeColACenterX)
+                                    putExtra("userY", 2100f)
+                                }
+                                context.sendBroadcast(intent)
+                            },
+                            modifier = Modifier.weight(1f),
+                            border = BorderStroke(1.dp, Color(0xFF00E5FF))
+                        ) {
+                            Text("Test Col A Scalp", color = Color(0xFF00E5FF), fontSize = 11.sp)
+                        }
+                        OutlinedButton(
+                            onClick = {
+                                val intent = Intent(LadderTouchService.ACTION_SCALP_COLUMN_B).apply {
+                                    setPackage(context.packageName)
+                                    putExtra("userX", LadderTouchService.activeColBCenterX)
+                                    putExtra("userY", 1500f)
+                                }
+                                context.sendBroadcast(intent)
+                            },
+                            modifier = Modifier.weight(1f),
+                            border = BorderStroke(1.dp, Color(0xFFFF4081))
+                        ) {
+                            Text("Test Col B Scalp", color = Color(0xFFFF4081), fontSize = 11.sp)
+                        }
+                    }
+                }
+            }
+        }
+
         // Quick Calibration Card
         Card(
             modifier = Modifier.fillMaxWidth(),
@@ -428,19 +781,23 @@ fun DashboardTab(
                     Button(
                         onClick = {
                             val betAngelConfig = config.copy(
-                                ladderLeft = 80,
-                                ladderTop = 330,
-                                ladderWidth = 320,
-                                ladderHeight = 560,
-                                rowHeight = 31,
+                                ladderLeft = 44,
+                                ladderTop = 792,
+                                ladderWidth = 992,
+                                ladderHeight = 1210,
+                                rowHeight = 67,
                                 rowCount = 18,
-                                backColX = 162,
-                                layColX = 320,
+                                backColX = 224,
+                                layColX = 854,
+                                sampleBoxWidth = 80,
+                                sampleBoxHeight = 35,
+                                autoTradeEnabled = true,
+                                cooldownMs = 150L,
                                 presetName = "Bet Angel v1.63",
                                 triggerStrategy = LadderConfig.STRATEGY_SPREAD_SHIFT
                             )
                             onConfigChanged(betAngelConfig)
-                            Toast.makeText(context, "Loaded Bet Angel v1.63 Preset", Toast.LENGTH_SHORT).show()
+                            Toast.makeText(context, "Loaded Bet Angel 1080x2400 Preset", Toast.LENGTH_SHORT).show()
                         },
                         colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0284C7)),
                         contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)
@@ -872,5 +1229,285 @@ fun FlowStrategyTab(
                 )
             }
         }
+    }
+}
+
+/**
+ * Guide & Instructions Tab: Prerequisites, Setup & Trading Workflow
+ */
+@Composable
+fun GuideTab(
+    activity: MainActivity,
+    isAccessibilityActive: Boolean,
+    onNavigateToDashboard: () -> Unit
+) {
+    val context = activity
+    val scrollState = rememberScrollState()
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(16.dp)
+            .verticalScroll(scrollState),
+        verticalArrangement = Arrangement.spacedBy(16.dp)
+    ) {
+        // Header
+        Column {
+            Text(
+                "App Guide & Instructions",
+                fontWeight = FontWeight.Bold,
+                color = Color.White,
+                fontSize = 20.sp
+            )
+            Text(
+                "Prerequisites, Step-by-Step Trading & Safety Protocols",
+                color = Color.Gray,
+                fontSize = 12.sp
+            )
+        }
+
+        // Section 1: Prerequisites & Permissions Checklist
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(containerColor = Color(0xFF1E293B)),
+            shape = RoundedCornerShape(12.dp)
+        ) {
+            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text(
+                    "1. Prerequisites & Required Permissions",
+                    fontWeight = FontWeight.Bold,
+                    color = Color(0xFF60A5FA),
+                    fontSize = 15.sp
+                )
+
+                // Accessibility Service
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("• Accessibility Service:", fontWeight = FontWeight.SemiBold, color = Color.White, fontSize = 13.sp)
+                        Text(
+                            if (isAccessibilityActive) "CONNECTED" else "REQUIRED",
+                            color = if (isAccessibilityActive) Color(0xFF34D399) else Color(0xFFEF4444),
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 12.sp
+                        )
+                    }
+                    Text(
+                        "Enables kernel-level atomic companion taps (+20ms). Zero delays, zero visual popups.",
+                        color = Color.LightGray,
+                        fontSize = 11.sp
+                    )
+                    if (!isAccessibilityActive) {
+                        Button(
+                            onClick = {
+                                try {
+                                    context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+                                } catch (_: Exception) {
+                                    Toast.makeText(context, "Open Settings -> Accessibility", Toast.LENGTH_SHORT).show()
+                                }
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2563EB)),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text("ENABLE ACCESSIBILITY SERVICE", fontSize = 12.sp)
+                        }
+                    }
+                }
+
+                HorizontalDivider(color = Color(0xFF334155), thickness = 0.5.dp)
+
+                // Display Over Other Apps
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    val hasOverlay = Settings.canDrawOverlays(context)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("• Overlay Permission:", fontWeight = FontWeight.SemiBold, color = Color.White, fontSize = 13.sp)
+                        Text(
+                            if (hasOverlay) "GRANTED" else "OPTIONAL",
+                            color = if (hasOverlay) Color(0xFF34D399) else Color(0xFFFBBF24),
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 12.sp
+                        )
+                    }
+                    Text(
+                        "Allows displaying the Calibration HUD if you want to visually verify ladder bounds.",
+                        color = Color.LightGray,
+                        fontSize = 11.sp
+                    )
+                    if (!hasOverlay) {
+                        OutlinedButton(
+                            onClick = {
+                                try {
+                                    context.startActivity(
+                                        Intent(
+                                            Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                                            Uri.parse("package:${context.packageName}")
+                                        )
+                                    )
+                                } catch (_: Exception) {
+                                    Toast.makeText(context, "Open Settings -> Apps -> Display Over Other Apps", Toast.LENGTH_SHORT).show()
+                                }
+                            },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text("GRANT OVERLAY PERMISSION", fontSize = 12.sp)
+                        }
+                    }
+                }
+
+                HorizontalDivider(color = Color(0xFF334155), thickness = 0.5.dp)
+
+                // Screen Capture (MediaProjection)
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text("• Screen Capture (MediaProjection):", fontWeight = FontWeight.SemiBold, color = Color.White, fontSize = 13.sp)
+                    Text(
+                        "Prompted automatically when you tap 'START 50Hz ENGINE'. Powers the 50 FPS OpenCV vision engine detecting spread & empty rungs.",
+                        color = Color.LightGray,
+                        fontSize = 11.sp
+                    )
+                }
+
+                HorizontalDivider(color = Color(0xFF334155), thickness = 0.5.dp)
+
+                // Xiaomi / MIUI Battery Saver
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text("• Xiaomi / MIUI Battery Optimization:", fontWeight = FontWeight.SemiBold, color = Color.White, fontSize = 13.sp)
+                    Text(
+                        "Recommended on Redmi Note 10 Pro: App Info -> Battery Saver -> Select 'No restrictions' so MIUI never throttles the background engine.",
+                        color = Color.LightGray,
+                        fontSize = 11.sp
+                    )
+                }
+            }
+        }
+
+        // Section 2: Step-by-Step How to Use
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(containerColor = Color(0xFF1E293B)),
+            shape = RoundedCornerShape(12.dp)
+        ) {
+            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text(
+                    "2. How to Trade Step-by-Step",
+                    fontWeight = FontWeight.Bold,
+                    color = Color(0xFF34D399),
+                    fontSize = 15.sp
+                )
+
+                InstructionStep(
+                    step = "Step 1",
+                    title = "Verify System Status",
+                    desc = "Ensure Accessibility Service is CONNECTED and NDK C++ Core is LOADED in the Dashboard matrix."
+                )
+
+                InstructionStep(
+                    step = "Step 2",
+                    title = "Start 50Hz Engine",
+                    desc = "Tap 'START 50Hz ENGINE'. On the Android dialog 'Start recording or casting with LadderVision?', tap 'Start now'. You will see the active green notification bar."
+                )
+
+                InstructionStep(
+                    step = "Step 3",
+                    title = "Arm Touch Companion (When Trading)",
+                    desc = "On the Dashboard, tap 'ARM HOOK' under Companion Touch Interceptor. (Safety Note: It strictly activates only inside Microsoft Remote Desktop and sleeps automatically everywhere else)."
+                )
+
+                InstructionStep(
+                    step = "Step 4",
+                    title = "Switch to Microsoft Remote Desktop",
+                    desc = "Open Microsoft Remote Desktop with your Bet Angel v1.63 ladder in portrait mode ($1080x2400 preset)."
+                )
+
+                InstructionStep(
+                    step = "Step 5",
+                    title = "Execute Scalp Orders",
+                    desc = "• Tap Column B (Pink / Lay): Places your bet and automatically strikes the vacant row below the lowest ask in +20ms. Col A is untouched.\n• Tap Column A (Cyan / Back): Places your bet and automatically strikes the vacant row above the highest bid in +20ms. Col B is untouched.\n• Price Column: Free for native scrolling and zooming."
+                )
+
+                InstructionStep(
+                    step = "Step 6",
+                    title = "Stopping the Session",
+                    desc = "When done trading, return to LadderVision and tap 'STOP ENGINE' and 'DISARM'."
+                )
+            }
+        }
+
+        // Section 3: Hardware Kill Switch
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(containerColor = Color(0xFF2A1515)),
+            shape = RoundedCornerShape(12.dp)
+        ) {
+            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    "3. Emergency Hardware Kill Switch (<5ms)",
+                    fontWeight = FontWeight.Bold,
+                    color = Color(0xFFF87171),
+                    fontSize = 15.sp
+                )
+                Text(
+                    "• Instant Volume Key Abort: Pressing Volume UP or Volume DOWN on your phone instantly aborts all gesture dispatches and disarms automation in under 5ms.\n• Notification Kill Switch: Tap 'KILL SWITCH' on the persistent notification bar.\n• In-App Button: Tap the red 'KILL SWITCH' button on the Dashboard at any time.",
+                    color = Color(0xFFFCA5A5),
+                    fontSize = 12.sp
+                )
+            }
+        }
+
+        // Section 4: Phone Touch Protection Guarantee
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(containerColor = Color(0xFF131D31)),
+            shape = RoundedCornerShape(12.dp)
+        ) {
+            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    "4. Phone Touchpad & Screen Protection",
+                    fontWeight = FontWeight.Bold,
+                    color = Color(0xFF38BDF8),
+                    fontSize = 15.sp
+                )
+                Text(
+                    "• 100% Native Outside Trading: By default, the touch interceptor is DISARMED and detaches all overlay views.\n• Foreground App Isolation: The interceptor only ever attaches when Microsoft Remote Desktop (com.microsoft.rdc.androidx) is active on screen.\n• Switching to your phone's home screen, WhatsApp, soft keyboard, or settings immediately detaches all touch hooks, ensuring your phone's screen and touchpad remain 100% responsive and normal.",
+                    color = Color.LightGray,
+                    fontSize = 12.sp
+                )
+            }
+        }
+
+        // Return to Dashboard Button
+        Button(
+            onClick = { onNavigateToDashboard() },
+            modifier = Modifier.fillMaxWidth(),
+            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2563EB))
+        ) {
+            Text("RETURN TO DASHBOARD")
+        }
+    }
+}
+
+@Composable
+fun InstructionStep(step: String, title: String, desc: String) {
+    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(
+                modifier = Modifier
+                    .background(Color(0xFF334155), RoundedCornerShape(4.dp))
+                    .padding(horizontal = 6.dp, vertical = 2.dp)
+            ) {
+                Text(step, color = Color(0xFF38BDF8), fontWeight = FontWeight.Bold, fontSize = 10.sp)
+            }
+            Spacer(modifier = Modifier.width(8.dp))
+            Text(title, fontWeight = FontWeight.SemiBold, color = Color.White, fontSize = 13.sp)
+        }
+        Text(desc, color = Color.LightGray, fontSize = 11.sp, modifier = Modifier.padding(start = 4.dp))
+        Spacer(modifier = Modifier.height(4.dp))
+        HorizontalDivider(color = Color(0xFF334155), thickness = 0.5.dp)
     }
 }

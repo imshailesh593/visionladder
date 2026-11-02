@@ -226,6 +226,9 @@ Java_com_laddervision_engine_vision_NativeVisionCore_detectBetAngelMedianAndStri
     int32_t bestBackRow = -1;
     int32_t bestLayRow = -1;
 
+    // Scan Column A from top (highest price odds down to lowest)
+    // Find the FIRST row that contains volume/numbers in Column A.
+    // Above this row, Column A is completely vacant.
     for (int32_t r = 0; r < cfg.rowCount; ++r) {
         int32_t cellY = cfg.ladderTop + (r * cfg.rowHeight) + (cfg.rowHeight / 2);
         if (cellY >= height) break;
@@ -233,22 +236,35 @@ Java_com_laddervision_engine_vision_NativeVisionCore_detectBetAngelMedianAndStri
         int32_t darkBack = countDarkPixelsInCell(buf, width, height, rowStride, pixelStride,
                                                  cfg.backColX, cellY,
                                                  cfg.sampleBoxWidth, cfg.sampleBoxHeight, 80);
-        if (bestBackRow == -1 && darkBack >= 10) {
+        if (darkBack >= 10) {
             bestBackRow = r;
+            break; // Found top-most row with Back volume
         }
+    }
+
+    // Scan Column B from bottom (lowest price odds up to highest)
+    // Find the FIRST row that contains volume/numbers in Column B.
+    // Below this row, Column B is completely vacant.
+    for (int32_t r = cfg.rowCount - 1; r >= 0; --r) {
+        int32_t cellY = cfg.ladderTop + (r * cfg.rowHeight) + (cfg.rowHeight / 2);
+        if (cellY >= height) continue;
 
         int32_t darkLay = countDarkPixelsInCell(buf, width, height, rowStride, pixelStride,
                                                 cfg.layColX, cellY,
                                                 cfg.sampleBoxWidth, cfg.sampleBoxHeight, 80);
         if (darkLay >= 10) {
-            bestLayRow = r; // Updates until lowest price row with lay money
+            bestLayRow = r;
+            break; // Found bottom-most row with Lay volume
         }
     }
 
-    // Strike 1 (Back side): above 857 (at bestLayRow)
-    // Strike 2 (Lay side): below 755 (at bestBackRow)
-    int32_t backStrikeRow = (bestLayRow != -1) ? bestLayRow : (bestBackRow - 1);
-    int32_t layStrikeRow = (bestBackRow != -1) ? bestBackRow : (bestLayRow + 1);
+    // Exact Boundary Targeting:
+    // - Column A: Vacant row where Column A ends from the top (immediately above bestBackRow).
+    //   There are NO numbers above this row in Column A.
+    // - Column B: Vacant row where Column B ends from the bottom (immediately below bestLayRow).
+    //   There are NO numbers below this row in Column B.
+    int32_t backStrikeRow = (bestBackRow > 0) ? (bestBackRow - 1) : 0;
+    int32_t layStrikeRow = (bestLayRow != -1 && bestLayRow < cfg.rowCount - 1) ? (bestLayRow + 1) : (cfg.rowCount - 1);
 
     auto tEnd = std::chrono::high_resolution_clock::now();
     int32_t timeUs = static_cast<int32_t>(std::chrono::duration_cast<std::chrono::microseconds>(tEnd - tStart).count());
@@ -283,27 +299,49 @@ Java_com_laddervision_engine_vision_NativeVisionCore_autoDetectBetAngelLadder(
     uint8_t *buf = static_cast<uint8_t *>(env->GetDirectBufferAddress(byteBuffer));
     if (!buf) return nullptr;
 
-    // Detect Bet Angel royal blue price column: R < 35, G < 35, B > 130
-    int32_t minX = width, maxX = 0;
-    int32_t minY = height, maxY = 0;
-    int32_t blueCount = 0;
-
+    // Detect Bet Angel royal blue price column using column-wise histogram:
+    // Royal blue: R < 40, G < 40, B > 130
+    std::vector<int32_t> colBlueCounts(width, 0);
     for (int32_t y = 0; y < height; y += 4) {
         const uint8_t *rowPtr = buf + (y * rowStride);
         for (int32_t x = 0; x < width; x += 4) {
             const uint8_t *p = rowPtr + (x * pixelStride);
-            if (p[0] < 35 && p[1] < 35 && p[2] > 130) {
-                blueCount++;
-                if (x < minX) minX = x;
-                if (x > maxX) maxX = x;
-                if (y < minY) minY = y;
-                if (y > maxY) maxY = y;
+            if (p[0] < 40 && p[1] < 40 && p[2] > 130) {
+                colBlueCounts[x]++;
             }
         }
     }
 
-    if (blueCount < 50 || maxX <= minX || maxY <= minY) {
+    int32_t minX = width, maxX = 0;
+    for (int32_t x = 0; x < width; x += 4) {
+        if (colBlueCounts[x] > 35) {
+            if (x < minX) minX = x;
+            if (x > maxX) maxX = x;
+        }
+    }
+
+    if (maxX <= minX) {
         return nullptr; // Could not detect Bet Angel price column automatically
+    }
+
+    int32_t minY = height, maxY = 0;
+    for (int32_t y = 0; y < height; y += 4) {
+        int32_t rowBlue = 0;
+        const uint8_t *rowPtr = buf + (y * rowStride);
+        for (int32_t x = minX; x <= maxX; x += 4) {
+            const uint8_t *p = rowPtr + (x * pixelStride);
+            if (p[0] < 40 && p[1] < 40 && p[2] > 130) {
+                rowBlue++;
+            }
+        }
+        if (rowBlue > 5) {
+            if (y < minY) minY = y;
+            if (y > maxY) maxY = y;
+        }
+    }
+
+    if (maxY <= minY) {
+        return nullptr;
     }
 
     int32_t colWidth = maxX - minX + 1;

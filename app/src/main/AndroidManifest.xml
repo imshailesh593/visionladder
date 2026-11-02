@@ -10,9 +10,9 @@
 
     <application
         android:allowBackup="true"
-        android:icon="@android:drawable/sym_def_app_icon"
+        android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
-        android:roundIcon="@android:drawable/sym_def_app_icon"
+        android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
         android:theme="@android:style/Theme.Material.Light.NoActionBar">
 
@@ -41,11 +41,23 @@
         <service
             android:name=".service.LadderAutomationService"
             android:foregroundServiceType="mediaProjection"
-            android:exported="false" />
+            android:exported="true" />
 
         <service
             android:name=".overlay.CalibrationHudService"
-            android:exported="false" />
+            android:exported="true" />
+
+        <receiver
+            android:name=".widget.VisionWidgetProvider"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+                <action android:name="com.laddervision.action.TOGGLE_WIDGET_STATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_vision_switch_info" />
+        </receiver>
 
     </application>
 

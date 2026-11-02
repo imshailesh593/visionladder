@@ -4,26 +4,26 @@ import android.content.Context
 import android.content.SharedPreferences
 
 data class LadderConfig(
-    var ladderLeft: Int = 100,
-    var ladderTop: Int = 400,
-    var ladderWidth: Int = 880,
-    var ladderHeight: Int = 1200,
-    var rowHeight: Int = 60,
-    var rowCount: Int = 20,
-    var backColX: Int = 380,
-    var layColX: Int = 700,
-    var sampleBoxWidth: Int = 40,
-    var sampleBoxHeight: Int = 20,
+    var ladderLeft: Int = 298,
+    var ladderTop: Int = 800,
+    var ladderWidth: Int = 594,
+    var ladderHeight: Int = 1300,
+    var rowHeight: Int = 76,
+    var rowCount: Int = 17,
+    var backColX: Int = 397,
+    var layColX: Int = 793,
+    var sampleBoxWidth: Int = 80,
+    var sampleBoxHeight: Int = 35,
     var luminanceThreshold: Float = 55.0f,
     var detectionMode: Int = 0, // 0: Luminance, 1: Color Chroma, 2: Combined
     var minConfidence: Float = 0.5f,
-    var autoTradeEnabled: Boolean = false,
-    var cooldownMs: Long = 100L,
+    var autoTradeEnabled: Boolean = true,
+    var cooldownMs: Long = 150L,
     var targetUpperOffsetRows: Int = 1,
     var lowerBlankOffsetRows: Int = 1,
     var triggerStrategy: Int = 0, // 0: SPREAD_SHIFT, 1: GAP_EXPANSION, 2: CONTINUOUS_PEG, 3: MANUAL_ONE_SHOT, 4: MONITOR_ONLY
     var requiredGapRungs: Int = 1,
-    var presetName: String = "Default"
+    var presetName: String = "Bet Angel v1.63 (1080x2400)"
 ) {
     companion object {
         const val STRATEGY_SPREAD_SHIFT = 0
@@ -37,14 +37,14 @@ data class LadderConfig(
         fun load(context: Context): LadderConfig {
             val p = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
             return LadderConfig(
-                ladderLeft = p.getInt("ladderLeft", 100),
-                ladderTop = p.getInt("ladderTop", 400),
-                ladderWidth = p.getInt("ladderWidth", 880),
-                ladderHeight = p.getInt("ladderHeight", 1200),
-                rowHeight = p.getInt("rowHeight", 60),
-                rowCount = p.getInt("rowCount", 20),
-                backColX = p.getInt("backColX", 380),
-                layColX = p.getInt("layColX", 700),
+                ladderLeft = p.getInt("ladderLeft", 298),
+                ladderTop = p.getInt("ladderTop", 800),
+                ladderWidth = p.getInt("ladderWidth", 594),
+                ladderHeight = p.getInt("ladderHeight", 1300),
+                rowHeight = p.getInt("rowHeight", 76),
+                rowCount = p.getInt("rowCount", 17),
+                backColX = p.getInt("backColX", 397),
+                layColX = p.getInt("layColX", 793),
                 sampleBoxWidth = p.getInt("sampleBoxWidth", 40),
                 sampleBoxHeight = p.getInt("sampleBoxHeight", 20),
                 luminanceThreshold = p.getFloat("luminanceThreshold", 55.0f),

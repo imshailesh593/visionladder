@@ -1,5 +1,6 @@
 package com.laddervision.engine.service
 
+import android.app.Activity
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -23,6 +24,7 @@ import com.laddervision.engine.model.LadderConfig
 import com.laddervision.engine.touch.LadderTouchService
 import com.laddervision.engine.ui.MainActivity
 import com.laddervision.engine.vision.NativeVisionCore
+import com.laddervision.engine.widget.VisionWidgetProvider
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -43,6 +45,8 @@ class LadderAutomationService : Service() {
         const val ACTION_STOP = "com.laddervision.action.STOP"
         const val ACTION_KILL = "com.laddervision.action.KILL"
         const val ACTION_ONE_SHOT = "com.laddervision.action.ONE_SHOT"
+        const val ACTION_UPDATE_CONFIG = "com.laddervision.action.UPDATE_CONFIG"
+        const val ACTION_TRIGGER_STRIKE = "com.laddervision.action.TRIGGER_STRIKE"
         const val EXTRA_RESULT_CODE = "extra_result_code"
         const val EXTRA_RESULT_DATA = "extra_result_data"
 
@@ -79,7 +83,6 @@ class LadderAutomationService : Service() {
 
         when (action) {
             ACTION_START -> {
-                startForegroundWithNotification()
                 val resultCode = intent.getIntExtra(EXTRA_RESULT_CODE, -1)
                 val resultData = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                     intent.getParcelableExtra(EXTRA_RESULT_DATA, Intent::class.java)
@@ -87,8 +90,17 @@ class LadderAutomationService : Service() {
                     @Suppress("DEPRECATION")
                     intent.getParcelableExtra(EXTRA_RESULT_DATA)
                 }
-                if (resultData != null) {
-                    startCaptureWithProjection(resultCode, resultData)
+                if (resultCode == Activity.RESULT_OK && resultData != null) {
+                    try {
+                        startForegroundWithNotification()
+                        startCaptureWithProjection(resultCode, resultData)
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Failed to start MediaProjection capture", e)
+                        stopAutomation()
+                    }
+                } else {
+                    Log.w(TAG, "Cannot start 50Hz engine without valid MediaProjection consent (resultCode=$resultCode).")
+                    stopAutomation()
                 }
             }
             ACTION_STOP -> {
@@ -97,8 +109,26 @@ class LadderAutomationService : Service() {
             ACTION_KILL -> {
                 emergencyKill()
             }
-            ACTION_ONE_SHOT -> {
+            ACTION_ONE_SHOT, ACTION_TRIGGER_STRIKE -> {
                 triggerOneShot()
+            }
+            ACTION_UPDATE_CONFIG -> {
+                val newConfig = config.copy(
+                    ladderLeft = intent.getIntExtra("ladderLeft", config.ladderLeft),
+                    ladderTop = intent.getIntExtra("ladderTop", config.ladderTop),
+                    ladderWidth = intent.getIntExtra("ladderWidth", config.ladderWidth),
+                    ladderHeight = intent.getIntExtra("ladderHeight", config.ladderHeight),
+                    rowHeight = intent.getIntExtra("rowHeight", config.rowHeight),
+                    rowCount = intent.getIntExtra("rowCount", config.rowCount),
+                    backColX = intent.getIntExtra("backColX", config.backColX),
+                    layColX = intent.getIntExtra("layColX", config.layColX),
+                    sampleBoxWidth = intent.getIntExtra("sampleBoxWidth", config.sampleBoxWidth),
+                    sampleBoxHeight = intent.getIntExtra("sampleBoxHeight", config.sampleBoxHeight),
+                    autoTradeEnabled = intent.getBooleanExtra("autoTradeEnabled", config.autoTradeEnabled),
+                    cooldownMs = intent.getLongExtra("cooldownMs", config.cooldownMs)
+                )
+                updateConfig(newConfig)
+                Log.i(TAG, "Config updated via ACTION_UPDATE_CONFIG: top=${newConfig.ladderTop}, rowH=${newConfig.rowHeight}, backX=${newConfig.backColX}, layX=${newConfig.layColX}, auto=${newConfig.autoTradeEnabled}")
             }
         }
 
@@ -121,7 +151,7 @@ class LadderAutomationService : Service() {
         )
 
         val notification: Notification = NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("Ladder Vision Engine Active")
+            .setContentTitle("Vision Active")
             .setContentText("Sub-20ms frame ingestion & gesture injection pipeline running")
             .setSmallIcon(android.R.drawable.presence_online)
             .setContentIntent(pendingIntent)
@@ -130,14 +160,23 @@ class LadderAutomationService : Service() {
             .setOngoing(true)
             .build()
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            startForeground(
-                NOTIFICATION_ID,
-                notification,
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION
-            )
-        } else {
-            startForeground(NOTIFICATION_ID, notification)
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                startForeground(
+                    NOTIFICATION_ID,
+                    notification,
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION
+                )
+            } else {
+                startForeground(NOTIFICATION_ID, notification)
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Foreground service start exception, falling back without type", e)
+            try {
+                startForeground(NOTIFICATION_ID, notification)
+            } catch (e2: Exception) {
+                Log.e(TAG, "Failed fallback startForeground", e2)
+            }
         }
     }
 
@@ -156,6 +195,7 @@ class LadderAutomationService : Service() {
             height = metrics.heightPixels,
             densityDpi = metrics.densityDpi
         )
+        VisionWidgetProvider.updateAllWidgets(this)
     }
 
     fun updateConfig(newConfig: LadderConfig) {
@@ -173,12 +213,14 @@ class LadderAutomationService : Service() {
         LadderTouchService.instance?.disarmImmediately()
         captureEngine.stopCapture()
         stopForeground(STOP_FOREGROUND_REMOVE)
+        VisionWidgetProvider.updateAllWidgets(this)
         stopSelf()
     }
 
     fun stopAutomation() {
         captureEngine.stopCapture()
         stopForeground(STOP_FOREGROUND_REMOVE)
+        VisionWidgetProvider.updateAllWidgets(this)
         stopSelf()
     }
 
@@ -189,6 +231,7 @@ class LadderAutomationService : Service() {
         if (instance == this) {
             instance = null
         }
+        VisionWidgetProvider.updateAllWidgets(this)
     }
 
     override fun onBind(intent: Intent?): IBinder? = null

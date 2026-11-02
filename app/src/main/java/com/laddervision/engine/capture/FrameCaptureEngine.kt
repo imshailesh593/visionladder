@@ -9,6 +9,7 @@ import android.media.ImageReader
 import android.media.projection.MediaProjection
 import android.os.Handler
 import android.os.HandlerThread
+import android.os.Looper
 import android.os.Process
 import android.os.SystemClock
 import android.util.Log
@@ -28,6 +29,10 @@ class FrameCaptureEngine(
     companion object {
         private const val TAG = "FrameCaptureEngine"
         private const val TARGET_INTERVAL_MS = 20L // 50 Hz loop cadence
+
+        @Volatile
+        var latestPlan: NativeVisionCore.BetAngelStrikePlan? = null
+            private set
     }
 
     private var mediaProjection: MediaProjection? = null
@@ -36,6 +41,7 @@ class FrameCaptureEngine(
 
     private var syncThread: HandlerThread? = null
     private var syncHandler: Handler? = null
+    private var projectionCallback: MediaProjection.Callback? = null
 
     private val isRunning = AtomicBoolean(false)
     private var config: LadderConfig = LadderConfig.load(context)
@@ -83,6 +89,17 @@ class FrameCaptureEngine(
             syncHandler = Handler(looper)
         }
 
+        // Register mandatory MediaProjection callback required on Android 14+ (API 34/35)
+        val callback = object : MediaProjection.Callback() {
+            override fun onStop() {
+                super.onStop()
+                Log.w(TAG, "MediaProjection stopped by system")
+                stopCapture()
+            }
+        }
+        this.projectionCallback = callback
+        projection.registerCallback(callback, syncHandler ?: Handler(Looper.getMainLooper()))
+
         virtualDisplay = projection.createVirtualDisplay(
             "LadderCaptureDisplay",
             width,
@@ -118,6 +135,11 @@ class FrameCaptureEngine(
 
         imageReader?.close()
         imageReader = null
+
+        try {
+            projectionCallback?.let { mediaProjection?.unregisterCallback(it) }
+        } catch (_: Exception) {}
+        projectionCallback = null
 
         mediaProjection?.stop()
         mediaProjection = null
@@ -158,6 +180,7 @@ class FrameCaptureEngine(
                     val imgH = image.height
 
                     val plan = visionCore.getBetAngelPlan(buffer, rowStride, pixelStride, imgW, imgH)
+                    latestPlan = plan
                     if (plan != null && (plan.bestBackRow != -1 || plan.bestLayRow != -1)) {
                         detectedRow = (plan.bestBackRow + plan.bestLayRow) / 2
                         confidence = plan.confidencePercent / 100.0f
@@ -174,15 +197,20 @@ class FrameCaptureEngine(
                             if (now - lastGestureTimeMs >= config.cooldownMs) {
                                 lastGestureTimeMs = now
 
-                                // Strike above 857 (at backStrikeRow in Back col)
-                                // Strike below 755 (at layStrikeRow in Lay col)
-                                val yBack = config.ladderTop + (plan.backStrikeRow * config.rowHeight) + (config.rowHeight / 2)
-                                val yLay = config.ladderTop + (plan.layStrikeRow * config.rowHeight) + (config.rowHeight / 2)
+                                // Strike above first Back volume (at backStrikeRow in Back col)
+                                // Strike below lowest Lay volume (at layStrikeRow in Lay col)
+                                val ladderTop = if (LadderTouchService.activeLadderTop > 0) LadderTouchService.activeLadderTop else config.ladderTop
+                                val rowHeight = if (LadderTouchService.activeRowH > 0) LadderTouchService.activeRowH else config.rowHeight
+                                val backX = if (LadderTouchService.activeColACenterX > 0f) LadderTouchService.activeColACenterX else config.backColX.toFloat()
+                                val layX = if (LadderTouchService.activeColBCenterX > 0f) LadderTouchService.activeColBCenterX else config.layColX.toFloat()
+
+                                val yBack = ladderTop + (plan.backStrikeRow * rowHeight) + (rowHeight / 2)
+                                val yLay = ladderTop + (plan.layStrikeRow * rowHeight) + (rowHeight / 2)
 
                                 LadderTouchService.instance?.dispatchDualSimultaneousTap(
-                                    config.backColX.toFloat(),
+                                    backX,
                                     yBack.toFloat(),
-                                    config.layColX.toFloat(),
+                                    layX,
                                     yLay.toFloat()
                                 )
                             }
