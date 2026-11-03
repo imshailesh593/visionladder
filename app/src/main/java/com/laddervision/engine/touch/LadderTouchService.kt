@@ -1051,11 +1051,7 @@ class LadderTouchService : AccessibilityService() {
 
         if (maxPriceY <= minPriceY) return
 
-        val detectedPriceColW = maxPriceX - minPriceX + 1
-        val detectedPriceCenterX = (minPriceX + maxPriceX) / 2
-        val detectedColACenterX = detectedPriceCenterX - detectedPriceColW
-        val detectedColBCenterX = detectedPriceCenterX + detectedPriceColW
-
+        val rawPriceColW = maxPriceX - minPriceX + 1
         val detectedLadderBot = maxPriceY
         val ladderH = maxPriceY - minPriceY
 
@@ -1072,7 +1068,7 @@ class LadderTouchService : AccessibilityService() {
                     dark++
                 }
             }
-            if (dark > (detectedPriceColW - 20) / 5) {
+            if (dark > (rawPriceColW - 20) / 5) {
                 if (gridYs.isEmpty() || (y - gridYs.last()) > 20) {
                     gridYs.add(y)
                 }
@@ -1097,14 +1093,27 @@ class LadderTouchService : AccessibilityService() {
             detectedRowCnt = (ladderH / detectedRowH).coerceIn(12, 22)
         }
 
+        // 4. Exact column boundaries derived from the Royal Blue Price Column
+        // The Price column is flanked on the left by Column A (Back) and on the right by Column B (Lay).
+        // In the Bet Angel ladder, Column A, Price, and Column B all share the exact same cell width.
+        val colAPriceLine = minPriceX - 6
+        val priceColBLine = maxPriceX + 6
+        val detectedPriceColW = (priceColBLine - colAPriceLine).coerceIn(160, 260)
+
+        val colALeftLine = colAPriceLine - detectedPriceColW
+        val colBRightLine = priceColBLine + detectedPriceColW
+
+        val detectedColACenterX = (colALeftLine + colAPriceLine) / 2
+        val detectedColBCenterX = (priceColBLine + colBRightLine) / 2
+
         // Safe sampling box: kept strictly within cell interior away from horizontal and vertical grid borders
         val boxHalfH = (detectedRowH * 0.20f).toInt().coerceAtLeast(8)
-        val boxHalfW = (detectedPriceColW * 0.25f).toInt().coerceAtLeast(25)
+        val boxHalfW = (detectedPriceColW * 0.20f).toInt().coerceAtLeast(20)
 
-        // 4. Scan Column A from top (r = 0 until detectedRowCnt)
-        // Find FIRST row with Back volume (dark pixels)
+        // 5. Scan Column A from top (r = 1 until detectedRowCnt - 1)
+        // Skip row 0 (Cancel button header). Find FIRST row with Back volume (dark pixels)
         var firstBackRow = -1
-        for (r in 0 until detectedRowCnt) {
+        for (r in 1 until (detectedRowCnt - 1)) {
             val yMid = detectedLadderTop + r * detectedRowH + detectedRowH / 2
             if (yMid >= height) break
             var darkCount = 0
@@ -1129,10 +1138,13 @@ class LadderTouchService : AccessibilityService() {
             }
         }
 
-        // 5. Scan Column B from bottom (r = detectedRowCnt - 1 downTo 0)
-        // Find lowest row with Lay volume (dark pixels)
+        // 6. Scan Column B from bottom of Lay region:
+        // In Bet Angel ladder, Lay volume is strictly above Back volume (rows <= firstBackRow).
+        // Scan upwards from searchLimit to find lowest Lay row with volume.
+        // Prevents scanner from ever dipping down into the Unmatched Bets / footer section!
+        val searchLimit = if (firstBackRow != -1) firstBackRow else (detectedRowCnt - 2)
         var lastLayRow = -1
-        for (r in (detectedRowCnt - 1) downTo 0) {
+        for (r in searchLimit downTo 1) {
             val yMid = detectedLadderTop + r * detectedRowH + detectedRowH / 2
             if (yMid >= height) continue
             var darkCount = 0
@@ -1160,8 +1172,8 @@ class LadderTouchService : AccessibilityService() {
         // Exact Boundary Targeting:
         // - Column A: Vacant row where Column A ends from top (immediately above firstBackRow)
         // - Column B: Vacant row where Column B ends from bottom (immediately below lastLayRow)
-        val backStrike = if (firstBackRow > 0) firstBackRow - 1 else 0
-        val layStrike = if (lastLayRow != -1 && lastLayRow < detectedRowCnt - 1) lastLayRow + 1 else (detectedRowCnt - 1)
+        val backStrike = if (firstBackRow > 1) firstBackRow - 1 else (if (firstBackRow == 1) 0 else 1)
+        val layStrike = if (lastLayRow != -1 && lastLayRow < detectedRowCnt - 1) lastLayRow + 1 else (if (firstBackRow != -1) firstBackRow else (detectedRowCnt - 2))
 
         activeBackStrikeRow = backStrike
         activeLayStrikeRow = layStrike
